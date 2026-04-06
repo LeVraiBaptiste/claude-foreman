@@ -2,7 +2,6 @@ package model
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,7 +12,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case TmuxStateMsg:
 		m.State = msg.State
-		m.Now = time.Now()
 		m.Items = flattenItems(m.State)
 		if m.Cursor >= len(m.Items) && len(m.Items) > 0 {
 			m.Cursor = len(m.Items) - 1
@@ -26,7 +24,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.Spinner, cmd = m.Spinner.Update(msg)
-		m.Now = time.Now()
 		return m, cmd
 
 	case tea.WindowSizeMsg:

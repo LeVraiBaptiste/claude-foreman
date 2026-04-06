@@ -12,6 +12,14 @@ Claude Code status is determined by scraping the visible content of tmux panes.
 - **waiting** — Claude is waiting for user permission
 - **idle** — Claude is running but not doing anything
 
+Context usage percentage and elapsed time are extracted from Claude Code's status bar, which looks like:
+
+```
+Opus 4.6 (1M context) | ░░░░░░░░░░░░░░░ 3% | $0.26 | 2m00s
+```
+
+This means claude-foreman requires a version of Claude Code that displays this status bar format. If the status bar is absent or has a different format, context and time info will simply not be shown.
+
 ## Install
 
 ### Nix (flake)

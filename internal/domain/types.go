@@ -32,8 +32,9 @@ type Process struct {
 }
 
 type ClaudeSession struct {
-	Status    ClaudeStatus
-	StartTime int64 // Unix timestamp (seconds), 0 if unknown
+	Status     ClaudeStatus
+	ContextPct int    // context window usage percentage (0-100), -1 if unknown
+	Elapsed    string // elapsed time string e.g. "2m00s", empty if unknown
 }
 
 type Pane struct {

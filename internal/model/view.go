@@ -3,7 +3,6 @@ package model
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -128,20 +127,27 @@ func (m Model) renderWindowLine(win domain.Window, navIdx int) string {
 func (m Model) renderClaudeContent(claude *domain.ClaudeSession, innerWidth int) string {
 	indicator := claudeStatusIndicator(claude.Status, m.Spinner.View())
 
-	dur := ""
-	if claude.StartTime > 0 {
-		elapsed := m.Now.Sub(time.Unix(claude.StartTime, 0))
-		dur = style.DurationStyle.Render(formatDuration(elapsed))
+	var infoParts []string
+	if claude.ContextPct >= 0 {
+		infoParts = append(infoParts, fmt.Sprintf("%d%%", claude.ContextPct))
+	}
+	if claude.Elapsed != "" {
+		infoParts = append(infoParts, claude.Elapsed)
+	}
+
+	info := ""
+	if len(infoParts) > 0 {
+		info = style.DurationStyle.Render(strings.Join(infoParts, " · "))
 	}
 
 	indicatorW := lipgloss.Width(indicator)
-	durW := lipgloss.Width(dur)
-	gap := innerWidth - 4 - indicatorW - durW // 4 = indent
+	infoW := lipgloss.Width(info)
+	gap := innerWidth - 4 - indicatorW - infoW // 4 = indent
 	if gap < 1 {
 		gap = 1
 	}
 
-	return "    " + indicator + strings.Repeat(" ", gap) + dur
+	return "    " + indicator + strings.Repeat(" ", gap) + info
 }
 
 func claudeStatusIndicator(status domain.ClaudeStatus, spinnerFrame string) string {
@@ -202,19 +208,3 @@ func (m Model) summaryText() string {
 	return strings.Join(parts, " · ")
 }
 
-func formatDuration(d time.Duration) string {
-	if d < 0 {
-		d = 0
-	}
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	}
-	mins := int(d.Minutes())
-	s := int(d.Seconds()) % 60
-	if mins >= 60 {
-		h := mins / 60
-		mins = mins % 60
-		return fmt.Sprintf("%dh %02dm", h, mins)
-	}
-	return fmt.Sprintf("%dm %02ds", mins, s)
-}

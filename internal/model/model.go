@@ -36,7 +36,6 @@ type Model struct {
 	Width     int
 	Height    int
 	Spinner spinner.Model
-	Now     time.Time
 }
 
 func New(poller *polling.Poller) Model {
@@ -46,7 +45,6 @@ func New(poller *polling.Poller) Model {
 	return Model{
 		Poller:  poller,
 		Spinner: s,
-		Now:     time.Now(),
 	}
 }
 

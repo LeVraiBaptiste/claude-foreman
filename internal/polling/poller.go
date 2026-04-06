@@ -10,6 +10,7 @@ import (
 	"github.com/LeVraiBaptiste/claude-foreman/internal/tmux"
 )
 
+
 type Poller struct {
 	Tmux     tmux.Client
 	Process  process.Inspector
@@ -89,12 +90,15 @@ func (p *Poller) assemble(
 				if isClaudePane(rp.CurrentCommand, children) {
 					target := rp.SessionName + ":" + rp.WindowIndex + "." + rp.Index
 					content, err := p.Tmux.CapturePane(target)
-					status := domain.ClaudeStatusIdle
+					result := claude.AnalyzeResult{Status: domain.ClaudeStatusIdle, ContextPct: -1}
 					if err == nil {
-						status = p.Analyzer.Analyze(content)
+						result = p.Analyzer.Analyze(content)
 					}
-					startTime := claudeStartTime(rp.CurrentCommand, panePID, children)
-					pane.Claude = &domain.ClaudeSession{Status: status, StartTime: startTime}
+					pane.Claude = &domain.ClaudeSession{
+						Status:     result.Status,
+						ContextPct: result.ContextPct,
+						Elapsed:    result.Elapsed,
+					}
 				}
 
 				win.Panes = append(win.Panes, pane)
@@ -110,21 +114,6 @@ func (p *Poller) assemble(
 		Sessions:     sessions,
 		ActiveTarget: activeSess + ":" + strconv.Itoa(activeWin) + ":" + strconv.Itoa(activePane),
 	}
-}
-
-// claudeStartTime finds the PID of the Claude process and reads its start time.
-func claudeStartTime(currentCommand string, panePID int, children []process.Process) int64 {
-	if strings.Contains(strings.ToLower(currentCommand), "claude") {
-		t, _ := process.ReadStartTime(panePID)
-		return t
-	}
-	for _, c := range children {
-		if strings.Contains(strings.ToLower(c.Command), "claude") {
-			t, _ := process.ReadStartTime(c.PID)
-			return t
-		}
-	}
-	return 0
 }
 
 func isClaudePane(currentCommand string, children []process.Process) bool {
