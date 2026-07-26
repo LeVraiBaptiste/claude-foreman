@@ -1,15 +1,17 @@
 package polling
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/LeVraiBaptiste/claude-foreman/internal/claude"
 	"github.com/LeVraiBaptiste/claude-foreman/internal/domain"
 	"github.com/LeVraiBaptiste/claude-foreman/internal/process"
+	"github.com/LeVraiBaptiste/claude-foreman/internal/state"
 	"github.com/LeVraiBaptiste/claude-foreman/internal/tmux"
 )
-
 
 type Poller struct {
 	Tmux     tmux.Client
@@ -74,6 +76,7 @@ func (p *Poller) assemble(
 
 				pane := domain.Pane{
 					Index:          paneIdx,
+					PaneID:         rp.PaneID,
 					PID:            panePID,
 					Active:         rp.Active == "1" && win.Active && paneIdx == activePane,
 					CurrentCommand: rp.CurrentCommand,
@@ -88,17 +91,7 @@ func (p *Poller) assemble(
 				}
 
 				if isClaudePane(rp.CurrentCommand, children) {
-					target := rp.SessionName + ":" + rp.WindowIndex + "." + rp.Index
-					content, err := p.Tmux.CapturePane(target)
-					result := claude.AnalyzeResult{Status: domain.ClaudeStatusIdle, ContextPct: -1}
-					if err == nil {
-						result = p.Analyzer.Analyze(content)
-					}
-					pane.Claude = &domain.ClaudeSession{
-						Status:     result.Status,
-						ContextPct: result.ContextPct,
-						Elapsed:    result.Elapsed,
-					}
+					pane.Claude = p.claudeSession(rp, children)
 				}
 
 				win.Panes = append(win.Panes, pane)
@@ -113,6 +106,110 @@ func (p *Poller) assemble(
 	return domain.AppState{
 		Sessions:     sessions,
 		ActiveTarget: activeSess + ":" + strconv.Itoa(activeWin) + ":" + strconv.Itoa(activePane),
+	}
+}
+
+// busyWindow is how long after the last status line invocation we still
+// consider the session "busy" on freshness alone (covers gaps between the
+// assistant messages that trigger the status line).
+const busyWindow = 10 * time.Second
+
+// toolShellComm lists shell process names. Claude Code runs every Bash tool via
+// a shell (`bash -c "…"`), so a shell descendant of the Claude process means a
+// tool is executing — the signal that keeps "busy" accurate during long tool
+// runs the status line can't see. Matching shells (rather than "any non-runtime
+// process") avoids false positives from persistent MCP servers (node/python).
+// Verified against a real session: idle tree is just the Claude process; during
+// a Bash tool it gains "bash" + the command.
+var toolShellComm = map[string]bool{
+	"bash": true,
+	"sh":   true,
+	"zsh":  true,
+	"dash": true,
+	"ksh":  true,
+	"fish": true,
+}
+
+// claudeSession builds a ClaudeSession for a pane. When the status line has
+// written telemetry for this pane (keyed by pane id), status is derived from
+// that + process activity + a narrow permission-prompt regex; otherwise it
+// falls back to full regex scraping of the pane content.
+func (p *Poller) claudeSession(rp tmux.RawPane, children []process.Process) *domain.ClaudeSession {
+	target := rp.SessionName + ":" + rp.WindowIndex + "." + rp.Index
+
+	if m, ok := state.Read(rp.PaneID); ok {
+		cs := &domain.ClaudeSession{
+			Source:       domain.ClaudeSourceState,
+			ContextPct:   m.ContextPct,
+			Model:        m.Model,
+			CostUSD:      m.CostUSD,
+			LinesAdded:   m.LinesAdded,
+			LinesRemoved: m.LinesRemoved,
+			Rate5hPct:    m.Rate5hPct,
+			Rate7dPct:    m.Rate7dPct,
+			Elapsed:      formatElapsed(m.DurationMs),
+		}
+		// waiting > busy > idle. "waiting" (a permission prompt) is the only
+		// state the status line can't reveal, so we check the rendered pane.
+		content, _ := p.Tmux.CapturePane(target)
+		switch {
+		case p.Analyzer.IsWaiting(content):
+			cs.Status = domain.ClaudeStatusWaiting
+		case fresh(m.UpdatedAt) || hasActiveToolChild(children):
+			cs.Status = domain.ClaudeStatusBusy
+		default:
+			cs.Status = domain.ClaudeStatusIdle
+		}
+		return cs
+	}
+
+	// Fallback: full regex over captured pane content (no integration here).
+	result := claude.AnalyzeResult{Status: domain.ClaudeStatusIdle, ContextPct: -1}
+	if content, err := p.Tmux.CapturePane(target); err == nil {
+		result = p.Analyzer.Analyze(content)
+	}
+	return &domain.ClaudeSession{
+		Source:     domain.ClaudeSourceScrape,
+		Status:     result.Status,
+		ContextPct: result.ContextPct,
+		Elapsed:    result.Elapsed,
+		Rate5hPct:  -1,
+		Rate7dPct:  -1,
+	}
+}
+
+// fresh reports whether a unix-seconds timestamp is within busyWindow of now.
+func fresh(updatedAt int64) bool {
+	return updatedAt > 0 && time.Since(time.Unix(updatedAt, 0)) < busyWindow
+}
+
+// hasActiveToolChild reports whether Claude has a shell descendant, i.e. it is
+// currently running a Bash tool.
+func hasActiveToolChild(children []process.Process) bool {
+	for _, c := range children {
+		if toolShellComm[strings.ToLower(c.Command)] {
+			return true
+		}
+	}
+	return false
+}
+
+// formatElapsed renders a duration in ms as e.g. "2m00s" / "1h05m" / "45s".
+func formatElapsed(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+	total := ms / 1000
+	h := total / 3600
+	m := (total % 3600) / 60
+	s := total % 60
+	switch {
+	case h > 0:
+		return fmt.Sprintf("%dh%02dm", h, m)
+	case m > 0:
+		return fmt.Sprintf("%dm%02ds", m, s)
+	default:
+		return fmt.Sprintf("%ds", s)
 	}
 }
 

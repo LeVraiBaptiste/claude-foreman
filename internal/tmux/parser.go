@@ -8,7 +8,7 @@ import (
 func ParseSessions(lines []string) []RawSession {
 	result := make([]RawSession, 0, len(lines))
 	for _, line := range lines {
-		parts := strings.SplitN(line, ":", 2)
+		parts := strings.SplitN(line, sep, 2)
 		if len(parts) != 2 {
 			continue
 		}
@@ -23,7 +23,7 @@ func ParseSessions(lines []string) []RawSession {
 func ParseWindows(lines []string) []RawWindow {
 	result := make([]RawWindow, 0, len(lines))
 	for _, line := range lines {
-		parts := strings.SplitN(line, ":", 4)
+		parts := strings.SplitN(line, sep, 4)
 		if len(parts) != 4 {
 			continue
 		}
@@ -40,24 +40,25 @@ func ParseWindows(lines []string) []RawWindow {
 func ParsePanes(lines []string) []RawPane {
 	result := make([]RawPane, 0, len(lines))
 	for _, line := range lines {
-		parts := strings.SplitN(line, ":", 6)
-		if len(parts) != 6 {
+		parts := strings.SplitN(line, sep, 7)
+		if len(parts) != 7 {
 			continue
 		}
 		result = append(result, RawPane{
 			SessionName:    parts[0],
 			WindowIndex:    parts[1],
 			Index:          parts[2],
-			PID:            parts[3],
-			CurrentCommand: parts[4],
-			Active:         parts[5],
+			PaneID:         parts[3],
+			PID:            parts[4],
+			CurrentCommand: parts[5],
+			Active:         parts[6],
 		})
 	}
 	return result
 }
 
 func ParseActiveTarget(raw string) (session string, window int, pane int) {
-	parts := strings.SplitN(raw, ":", 3)
+	parts := strings.SplitN(raw, sep, 3)
 	if len(parts) != 3 {
 		return "", 0, 0
 	}

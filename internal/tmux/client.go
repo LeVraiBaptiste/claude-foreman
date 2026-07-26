@@ -21,10 +21,16 @@ type RawPane struct {
 	SessionName    string
 	WindowIndex    string
 	Index          string
+	PaneID         string // tmux #{pane_id}, e.g. "%3" — matches $TMUX_PANE inside the pane
 	PID            string
 	CurrentCommand string
 	Active         string
 }
+
+// sep is the field delimiter used in tmux -F format strings. We use the ASCII
+// unit separator (0x1f) instead of ':' because session/window names and pane
+// commands can legitimately contain ':', which would corrupt a ':'-based split.
+const sep = "\x1f"
 
 type Client interface {
 	ListSessions() ([]string, error)
@@ -38,19 +44,19 @@ type Client interface {
 type RealClient struct{}
 
 func (c *RealClient) ListSessions() ([]string, error) {
-	return runTmux("list-sessions", "-F", "#{session_name}:#{session_attached}")
+	return runTmux("list-sessions", "-F", join("#{session_name}", "#{session_attached}"))
 }
 
 func (c *RealClient) ListWindows() ([]string, error) {
-	return runTmux("list-windows", "-a", "-F", "#{session_name}:#{window_index}:#{window_name}:#{window_active}")
+	return runTmux("list-windows", "-a", "-F", join("#{session_name}", "#{window_index}", "#{window_name}", "#{window_active}"))
 }
 
 func (c *RealClient) ListPanes() ([]string, error) {
-	return runTmux("list-panes", "-a", "-F", "#{session_name}:#{window_index}:#{pane_index}:#{pane_pid}:#{pane_current_command}:#{pane_active}")
+	return runTmux("list-panes", "-a", "-F", join("#{session_name}", "#{window_index}", "#{pane_index}", "#{pane_id}", "#{pane_pid}", "#{pane_current_command}", "#{pane_active}"))
 }
 
 func (c *RealClient) ActiveTarget() (string, error) {
-	lines, err := runTmux("display-message", "-p", "#S:#I:#P")
+	lines, err := runTmux("display-message", "-p", join("#S", "#I", "#P"))
 	if err != nil {
 		return "", err
 	}
@@ -72,6 +78,10 @@ func (c *RealClient) CapturePane(target string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+func join(fields ...string) string {
+	return strings.Join(fields, sep)
 }
 
 func runTmux(args ...string) ([]string, error) {

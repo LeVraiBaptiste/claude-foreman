@@ -131,6 +131,9 @@ func (m Model) renderClaudeContent(claude *domain.ClaudeSession, innerWidth int)
 	if claude.ContextPct >= 0 {
 		infoParts = append(infoParts, fmt.Sprintf("%d%%", claude.ContextPct))
 	}
+	if claude.CostUSD > 0 {
+		infoParts = append(infoParts, fmt.Sprintf("$%.2f", claude.CostUSD))
+	}
 	if claude.Elapsed != "" {
 		infoParts = append(infoParts, claude.Elapsed)
 	}
@@ -140,14 +143,21 @@ func (m Model) renderClaudeContent(claude *domain.ClaudeSession, innerWidth int)
 		info = style.DurationStyle.Render(strings.Join(infoParts, " · "))
 	}
 
-	indicatorW := lipgloss.Width(indicator)
+	// Optional model tag between the status indicator and the metrics.
+	mid := ""
+	if claude.Model != "" {
+		mid = "  " + style.DurationStyle.Render(claude.Model)
+	}
+
+	left := indicator + mid
+	leftW := lipgloss.Width(left)
 	infoW := lipgloss.Width(info)
-	gap := innerWidth - 4 - indicatorW - infoW // 4 = indent
+	gap := innerWidth - 4 - leftW - infoW // 4 = indent
 	if gap < 1 {
 		gap = 1
 	}
 
-	return "    " + indicator + strings.Repeat(" ", gap) + info
+	return "    " + left + strings.Repeat(" ", gap) + info
 }
 
 func claudeStatusIndicator(status domain.ClaudeStatus, spinnerFrame string) string {
@@ -207,4 +217,3 @@ func (m Model) summaryText() string {
 	}
 	return strings.Join(parts, " · ")
 }
-

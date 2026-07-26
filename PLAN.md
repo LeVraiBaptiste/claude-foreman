@@ -29,7 +29,14 @@ internal/
     parser.go              # Fonctions pures : parsing des sorties tmux → types domaine
 
   claude/
-    status.go              # Analyzer : analyse le contenu capturé d'un pane pour déduire le statut Claude
+    status.go              # Analyzer : repli regex sur le contenu capturé d'un pane
+
+  statusline/
+    statusline.go          # Parse le JSON stdin de la status line Claude Code + rend la barre
+    git.go                 # Résumé git (branche + compteurs), caché brièvement
+
+  state/
+    state.go               # Fichiers d'état par pane (meta + status), écriture atomique, fusion
 
   process/
     inspector.go           # Interface Inspector + implémentation via /proc
@@ -159,16 +166,21 @@ Itère sur `AppState.Sessions` et rend l'arbre avec Lip Gloss :
 
 ---
 
-## Détection Claude — Pane Scraping
+## Détection Claude — Status line seule (avec repli regex)
 
-Approche zéro-config : pas de hooks, pas de fichiers de statut, pas de configuration utilisateur.
+Seul point d'intégration : la **status line** de Claude Code. **Pas de hooks.**
+Source principale : le **contrat JSON stable** de la status line, pas le rendu terminal.
 
 1. **Identification** : `isClaudePane` — un pane est Claude si sa commande courante ou un de ses processus enfants contient "claude"
-2. **Capture** : `tmux capture-pane -t <target> -p -J` — récupère le contenu visible du pane
-3. **Analyse** : regex sur les ~10 dernières lignes non-vides :
-   - `waiting` : `(?i)\(y\s*=\s*yes|Allow|Approve|Do you want|yes.*to proceed`
-   - `busy` : spinner unicode + `\w+ing\b`
-   - `idle` : défaut
+2. **Corrélation** : par `#{pane_id}` tmux, égal à `$TMUX_PANE` hérité par la commande status line
+3. **Métadonnées** (`internal/statusline`) : `claude-foreman statusline` lit le JSON stdin (modèle, `context_window.used_percentage`, coût, durée, lignes, rate-limits), rend la barre 2 lignes, et écrit `~/.claude/foreman/state/<pane>.meta.json`
+4. **Statut** (poller) déduit de 3 signaux, sans lire le texte de la barre :
+   - **busy** : `meta.json` fraîche (< 10 s → Claude émet des messages) **OU** le pane a un process-outil enfant actif (Claude exécute un outil ; couvre les longues exécutions que la status line ne voit pas)
+   - **waiting** : regex étroite sur le pane (prompt de permission) — le seul état non exposé par la status line
+   - **idle** : sinon
+5. **Repli** : si pas de `meta.json`, `tmux capture-pane -p -J` + regex complète (`internal/claude/status.go`) — l'intégration n'est pas obligatoire
+
+Installation : le flake expose `lib.statusLine` (helper une-ligne pour la conf) et `homeManagerModules.default` (module HM autonome). Sur NixOS + home-manager, on édite directement le module qui génère `settings.json`.
 
 ---
 
@@ -211,8 +223,12 @@ environment.systemPackages = [ inputs.claude-foreman.packages.${system}.default 
 - [x] Domaine — types dans domain/types.go
 - [x] Tmux client + parser — list sessions/windows/panes, capture-pane, parsing
 - [x] Process inspector — lecture de /proc pour les enfants d'un PID
-- [x] Claude analyzer — détection du statut par scraping pane
+- [x] Claude analyzer — détection du statut par scraping pane (repli)
 - [x] Poller + assemblage — orchestration + assemblage des données
 - [x] Model/Update/View — TUI complet avec navigation et rendu de l'arbre
 - [x] Switch client — action sur Enter/click pour changer de fenêtre tmux
 - [x] Flake complet — packaging Nix
+- [x] Intégration status line — `claude-foreman statusline` (métadonnées + rendu barre)
+- [x] Statut sans hooks — busy = fraîcheur ∨ process-outil `/proc` ; waiting = regex prompt
+- [x] Fichier d'état meta par pane + lecture dans le poller (repli regex conservé)
+- [x] Flake — helper `lib.statusLine` + module home-manager (statusLine seul)

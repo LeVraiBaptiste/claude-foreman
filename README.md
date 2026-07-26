@@ -6,19 +6,30 @@ Displays the tree of tmux sessions, windows, and panes. Detects Claude Code inst
 
 ## Status detection
 
-Claude Code status is determined by scraping the visible content of tmux panes.
+The only integration point is Claude Code's **status line**. No hooks.
 
-- **busy** — Claude is executing a tool (spinner + action detected)
-- **waiting** — Claude is waiting for user permission
-- **idle** — Claude is running but not doing anything
+`claude-foreman statusline` is registered as the status line command. Claude Code pipes a
+structured JSON (model, context %, cost, duration, lines added/removed, rate limits, …) to
+it on stdin — a documented, stable contract, not rendered output. Foreman renders the bar
+*and* records that telemetry to `~/.claude/foreman/state/<pane>.meta.json`, keyed by tmux
+pane id (`$TMUX_PANE`, inherited by the status line command).
 
-Context usage percentage and elapsed time are extracted from Claude Code's status bar, which looks like:
+The TUI derives status from three signals, none of which parse the status bar's text:
 
-```
-Opus 4.6 (1M context) | ░░░░░░░░░░░░░░░ 3% | $0.26 | 2m00s
-```
+- **busy** — the status line was invoked recently (fresh `meta.json`, i.e. Claude is
+  emitting messages) **or** the pane has an active child process (Claude is running a
+  tool — covers long builds/tests the status line can't see).
+- **waiting** — a permission prompt is detected by a narrow regex over the pane. This is
+  the one state the status line cannot expose.
+- **idle** — otherwise.
 
-This means claude-foreman requires a version of Claude Code that displays this status bar format. If the status bar is absent or has a different format, context and time info will simply not be shown.
+Context %, cost, model and rate limits come straight from the JSON.
+
+**Fallback.** For any Claude pane without a `meta.json` (status line not installed, or a
+Claude running elsewhere), Foreman falls back to full `tmux capture-pane` + regex. No
+integration is *required* to run the TUI — it just makes detection robust.
+
+See [Claude Code integration](#claude-code-integration) to wire it up.
 
 ## Install
 
@@ -65,6 +76,39 @@ go build -o claude-foreman ./cmd
 
 Requires `tmux` in PATH.
 
+## Claude Code integration
+
+Point Claude Code's status line at Foreman — that's the whole integration.
+
+### Nix flake (recommended)
+
+The flake exposes a `lib.statusLine` helper so your config stays a one-liner and Foreman
+owns the behaviour:
+
+```nix
+# in the module that builds ~/.claude/settings.json
+{ pkgs, inputs, ... }:
+{
+  home.file.".claude/settings.json".text = builtins.toJSON {
+    statusLine = inputs.claude-foreman.lib.statusLine pkgs;
+    # ...your other Claude Code settings...
+  };
+}
+```
+
+There's also a Home Manager module (`homeManagerModules.default`) that installs the binary
+and manages the settings file, for standalone Home Manager setups.
+
+### Manual
+
+Add to `~/.claude/settings.json` (adjust the path to the `claude-foreman` binary):
+
+```json
+{
+  "statusLine": { "type": "command", "command": "claude-foreman statusline", "padding": 2 }
+}
+```
+
 ## Usage
 
 ```
@@ -86,11 +130,12 @@ Run it in any terminal — it doesn't need to be inside tmux.
 
 Every 500ms, claude-foreman:
 
-1. Queries tmux for all sessions, windows, and panes
+1. Queries tmux for all sessions, windows, and panes (incl. `#{pane_id}`)
 2. Inspects `/proc` to find child processes of each pane
 3. Identifies panes running Claude Code (by process name)
-4. Captures the visible content of Claude panes via `tmux capture-pane`
-5. Analyzes the last lines with regex to determine status
+4. For each Claude pane, reads its `~/.claude/foreman/state/<pane>.meta.json`
+   (written by the status line) and derives status from freshness + process activity
+5. If no `meta.json` exists, falls back to `tmux capture-pane` + regex
 
 ## Requirements
 
