@@ -17,6 +17,10 @@ type Poller struct {
 	Tmux     tmux.Client
 	Process  process.Inspector
 	Analyzer *claude.Analyzer
+
+	// activity tracks the last transcript hash per pane id, for the
+	// content-diff busy signal. Written only from the (serialized) poll loop.
+	activity map[string]paneActivity
 }
 
 func (p *Poller) Poll() domain.AppState {
@@ -32,6 +36,8 @@ func (p *Poller) Poll() domain.AppState {
 	rawWindows := tmux.ParseWindows(windowLines)
 	rawPanes := tmux.ParsePanes(paneLines)
 	activeSess, activeWin, activePane := tmux.ParseActiveTarget(activeTarget)
+
+	p.pruneActivity(rawPanes)
 
 	return p.assemble(rawSessions, rawWindows, rawPanes, activeSess, activeWin, activePane)
 }
@@ -152,10 +158,16 @@ func (p *Poller) claudeSession(rp tmux.RawPane, children []process.Process) *dom
 		// waiting > busy > idle. "waiting" (a permission prompt) is the only
 		// state the status line can't reveal, so we check the rendered pane.
 		content, _ := p.Tmux.CapturePane(target)
+		// A moving transcript is the primary busy signal (see sawRecentChange);
+		// status-line freshness and a shell child are cheap backstops that can
+		// only extend "busy", never flip it off, so they can't re-introduce the
+		// flicker they used to cause on their own.
+		busy := p.sawRecentChange(rp.PaneID, content, time.Now()) ||
+			fresh(m.UpdatedAt) || hasActiveToolChild(children)
 		switch {
 		case p.Analyzer.IsWaiting(content):
 			cs.Status = domain.ClaudeStatusWaiting
-		case fresh(m.UpdatedAt) || hasActiveToolChild(children):
+		case busy:
 			cs.Status = domain.ClaudeStatusBusy
 		default:
 			cs.Status = domain.ClaudeStatusIdle
